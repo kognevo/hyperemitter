@@ -1,0 +1,8 @@
+# Bun configuration for hyperemitter
+[install]
+# Use npm registry
+registry = "https://registry.npmjs.org/"
+
+[test]
+# Test configuration
+timeout = 30000

@@ -1,29 +1,33 @@
-var EventEmitter = require('events').EventEmitter
-var hyperlog = require('hyperlog')
-var net = require('net')
-var cuid = require('cuid')
-var os = require('os')
-var pump = require('pump')
-var fastparallel = require('fastparallel')
-var eos = require('end-of-stream')
-var bulkws = require('bulk-write-stream')
-var through2 = require('through2')
-var xtend = require('xtend')
-var duplexify = require('duplexify')
-var deepEqual = require('deep-equal')
-var noop = function () {}
+import { EventEmitter } from 'node:events'
+import hyperlog from 'hyperlog'
+import { createServer as createNetServer, connect } from 'node:net'
+import { createId } from '@paralleldrive/cuid2'
+import { networkInterfaces } from 'node:os'
+import pump from 'pump'
+import fastparallel from 'fastparallel'
+import eos from 'end-of-stream'
+import bulkws from 'bulk-write-stream'
+import through2 from 'through2'
+import duplexify from 'duplexify'
+import deepEqual from 'deep-equal'
+import { readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import protobuf from 'protocol-buffers'
 
-var STOREID = '!!STOREID!!'
-var PEERS = '!!PEERS!!'
-var MYEVENTPEER = '!!MYEVENTPEER!!'
-var defaults = {
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
+const noop = () => {}
+
+const STOREID = '!!STOREID!!'
+const PEERS = '!!PEERS!!'
+const MYEVENTPEER = '!!MYEVENTPEER!!'
+const defaults = {
   reconnectTimeout: 1000
 }
 
-var fs = require('fs')
-var path = require('path')
-var protobuf = require('protocol-buffers')
-var coreCodecs = protobuf(fs.readFileSync(path.join(__dirname, 'codecs.proto')))
+const coreCodecs = protobuf(readFileSync(join(__dirname, 'codecs.proto')))
 
 function initializeCodecs (codecs) {
   codecs = codecs || []
@@ -32,7 +36,7 @@ function initializeCodecs (codecs) {
     codecs = protobuf(codecs)
   }
 
-  Object.keys(coreCodecs).forEach(function (name) {
+  Object.keys(coreCodecs).forEach((name) => {
     codecs[name] = coreCodecs[name]
   })
 
@@ -40,7 +44,7 @@ function initializeCodecs (codecs) {
 }
 
 function createChangeStream () {
-  var readStream = this._hyperlog.createReadStream({
+  const readStream = this._hyperlog.createReadStream({
     since: this._hyperlog.changes,
     live: true
   })
@@ -49,44 +53,40 @@ function createChangeStream () {
 }
 
 function processStream (changes, next) {
-  var that = this
-
-  that._parallel(that, publish, changes, next)
+  this._parallel(this, publish, changes, next)
 }
 
 function publish (change, done) {
-  var container = this.codecs.Event.decode(change.value)
-  var name = container.name
-  var decoder = this.codecs[name]
-  var event = container.payload
+  const container = this.codecs.Event.decode(change.value)
+  const name = container.name
+  const decoder = this.codecs[name]
+  let event = container.payload
 
   if (decoder) event = decoder.decode(event)
   this._parallel(this, this._listeners[name] || [], event, done)
 }
 
 function createServer () {
-  var that = this
+  this._server = createNetServer((peerStream) => {
+    this.status.emit('peerConnected')
 
-  this._server = net.createServer(function (peerStream) {
-    that.status.emit('peerConnected')
-
-    var peerId = that._lastPeerId++
-    var localStream = that._hyperlog.replicate({live: true})
-    var boundStreams = pump(peerStream, localStream, peerStream, function (err) {
-      if (err) that.status.emit('peerError', err)
-      else delete that._peers[peerId]
+    const peerId = this._lastPeerId++
+    const localStream = this._hyperlog.replicate({ live: true })
+    const boundStreams = pump(peerStream, localStream, peerStream, (err) => {
+      if (err) this.status.emit('peerError', err)
+      else delete this._peers[peerId]
     })
 
-    that._peers[peerId] = boundStreams
+    this._peers[peerId] = boundStreams
   })
 }
 
 function getLocalAddresses () {
-  var ifaces = os.networkInterfaces()
-  return Object.keys(ifaces).reduce(function (addresses, iface) {
-    return ifaces[iface].filter(function (ifaceIp) {
+  const ifaces = networkInterfaces()
+  return Object.keys(ifaces).reduce((addresses, iface) => {
+    return ifaces[iface].filter((ifaceIp) => {
       return !ifaceIp.internal
-    }).reduce(function (addresses, ifaceIp) {
+    }).reduce((addresses, ifaceIp) => {
       addresses.push(ifaceIp)
       return addresses
     }, addresses)
@@ -94,8 +94,8 @@ function getLocalAddresses () {
 }
 
 function connectToPeer (that, port, host, tries, callback) {
-  var stream = net.connect(port, host)
-  var key = host + ':' + port
+  const stream = connect(port, host)
+  const key = `${host}:${port}`
 
   if (that._peers[key]) {
     return callback ? callback() : undefined
@@ -103,16 +103,16 @@ function connectToPeer (that, port, host, tries, callback) {
 
   that._peers[key] = stream
 
-  stream.on('connect', function () {
-    var replicate = that._hyperlog.replicate({ live: true })
+  stream.on('connect', () => {
+    const replicate = that._hyperlog.replicate({ live: true })
     pump(replicate, stream, replicate)
 
-    var peers = Object.keys(that._peers).map(function (key) {
-      var split = key.split(':')
+    const peers = Object.keys(that._peers).map((key) => {
+      const split = key.split(':')
       return { address: split[0], port: split[1] }
     })
 
-    that._db.put(PEERS, JSON.stringify(peers), function (err) {
+    that._db.put(PEERS, JSON.stringify(peers), (err) => {
       if (callback) {
         callback(err)
         callback = null
@@ -120,12 +120,12 @@ function connectToPeer (that, port, host, tries, callback) {
     })
   })
 
-  eos(stream, function (err) {
+  eos(stream, (err) => {
     delete that._peers[key]
     if (err) {
       that.status.emit('connectionError', err, stream)
       if (!that._closed && tries < 10) {
-        setTimeout(function () {
+        setTimeout(() => {
           connectToPeer(that, port, host, tries + 1, callback)
         }, that._opts.reconnectTimeout)
       } else {
@@ -136,28 +136,24 @@ function connectToPeer (that, port, host, tries, callback) {
 }
 
 function connectToKnownPeers () {
-  var that = this
-
-  this._db.get(PEERS, function (err, peers) {
+  this._db.get(PEERS, (err, peers) => {
     if (err && err.notFound) return
-    if (err) return that.status.emit('error', err)
+    if (err) return this.status.emit('error', err)
 
-    function connectToPeer (peer, next) {
-      that.connect(peer.port, peer.address, next)
+    const connectToPeer = (peer, next) => {
+      this.connect(peer.port, peer.address, next)
     }
 
-    that._parallel(that, connectToPeer, JSON.parse(peers), noop)
+    this._parallel(this, connectToPeer, JSON.parse(peers), noop)
   })
 }
 
 function handleNewPeers () {
-  var that = this
+  this.on('EventPeer', (peer, callback) => {
+    const port = peer.addresses[0].port
+    const address = peer.addresses[0].ip
 
-  this.on('EventPeer', function (peer, callback) {
-    var port = peer.addresses[0].port
-    var address = peer.addresses[0].ip
-
-    if (peer.id !== peer.id) that.connect(port, address, callback)
+    if (peer.id !== peer.id) this.connect(port, address, callback)
     else callback()
   })
 }
@@ -176,7 +172,7 @@ function HyperEmitter (db, codecs, opts) {
     return new HyperEmitter(db, codecs, opts)
   }
 
-  this._opts = xtend(defaults, opts)
+  this._opts = { ...defaults, ...opts }
   this._parallel = fastparallel({ results: false })
   this._db = db
   this._hyperlog = hyperlog(db)
@@ -196,21 +192,20 @@ function HyperEmitter (db, codecs, opts) {
   connectToKnownPeers.call(this)
   handleNewPeers.call(this)
 
-  var that = this
-  this._hyperlog.ready(function () {
-    if (that._closed) return
+  this._hyperlog.ready(() => {
+    if (this._closed) return
 
-    that.changeStream = createChangeStream.call(that)
-    that.changes = that.changeStream
-    that.status.emit('ready')
+    this.changeStream = createChangeStream.call(this)
+    this.changes = this.changeStream
+    this.status.emit('ready')
   })
 }
 
 HyperEmitter.prototype.emit = function (name, data, callback) {
-  var encoder = this.codecs[name]
+  const encoder = this.codecs[name]
 
   if (encoder) data = encoder.encode(data)
-  var container = this.codecs.Event.encode({
+  const container = this.codecs.Event.encode({
     name: name,
     payload: data
   })
@@ -221,10 +216,10 @@ HyperEmitter.prototype.emit = function (name, data, callback) {
 }
 
 HyperEmitter.prototype.on = function (name, handler) {
-  var toInsert = handler
+  let toInsert = handler
 
   if (toInsert.length < 2) {
-    toInsert = function (msg, callback) {
+    toInsert = (msg, callback) => {
       handler(msg)
       callback()
     }
@@ -244,21 +239,20 @@ HyperEmitter.prototype.registerCodec = function (name, codec) {
     return this
   }
 
-  var codecs = name
-  var that = this
+  const codecs = name
 
   if (Array.isArray(codecs)) {
-    codecs.forEach(function (element) {
-      that.codecs[element.name] = element.codec
+    codecs.forEach((element) => {
+      this.codecs[element.name] = element.codec
     })
-    return that
+    return this
   }
 
   if (typeof codecs === 'object') {
-    Object.keys(codecs).forEach(function (name) {
-      that.codecs[name] = codecs[name]
+    Object.keys(codecs).forEach((name) => {
+      this.codecs[name] = codecs[name]
     })
-    return that
+    return this
   }
 
   return this
@@ -276,17 +270,16 @@ HyperEmitter.prototype.removeListener = function (name, func) {
 HyperEmitter.prototype.getId = function (callback) {
   if (this.id) { return callback(null, this.id) }
 
-  var that = this
-  var db = this._db
+  const db = this._db
 
-  db.get(STOREID, function (err, value) {
+  db.get(STOREID, (err, value) => {
     if (err && !err.notFound) { return callback(err) }
-    that.id = value || cuid()
-    db.put(STOREID, that.id, function (err) {
+    this.id = value || createId()
+    db.put(STOREID, this.id, (err) => {
       if (err) {
         return callback(err)
       }
-      callback(null, that.id)
+      callback(null, this.id)
     })
   })
 }
@@ -296,8 +289,6 @@ HyperEmitter.prototype.connect = function (port, host, callback) {
 }
 
 HyperEmitter.prototype.listen = function (port, address, callback) {
-  var that = this
-
   if (typeof address === 'function') {
     callback = address
     address = null
@@ -305,46 +296,46 @@ HyperEmitter.prototype.listen = function (port, address, callback) {
 
   this._listening = true
 
-  this.getId(function (err, id) {
+  this.getId((err, id) => {
     if (err) {
       return callback(err)
     }
 
-    that._server.listen(port, address, function (err) {
+    this._server.listen(port, address, (err) => {
       if (err) {
         return callback(err)
       }
 
-      var addresses = address ? [{ address: address }] : getLocalAddresses()
+      const addresses = address ? [{ address: address }] : getLocalAddresses()
 
-      addresses = addresses.map(function (ip) {
+      const mappedAddresses = addresses.map((ip) => {
         return {
           ip: ip.address,
-          port: that._server.address().port
+          port: this._server.address().port
         }
       })
 
-      var toStore = {
+      const toStore = {
         id: id,
-        addresses: addresses
+        addresses: mappedAddresses
       }
 
-      that._db.get(MYEVENTPEER, { valueEncoding: 'json' }, function (err, value) {
+      this._db.get(MYEVENTPEER, { valueEncoding: 'json' }, (err, value) => {
         if (err && !err.notFound) {
           return callback(err)
         }
 
         if (deepEqual(value, toStore)) {
-          return callback(null, that._server.address())
+          return callback(null, this._server.address())
         }
 
-        that.emit('EventPeer', toStore, function (err) {
+        this.emit('EventPeer', toStore, (err) => {
           if (err) { return callback(err) }
 
-          that._db.put(MYEVENTPEER, JSON.stringify(toStore), function (err) {
+          this._db.put(MYEVENTPEER, JSON.stringify(toStore), (err) => {
             if (err) { return callback(err) }
 
-            callback(null, that._server.address())
+            callback(null, this._server.address())
           })
         })
       })
@@ -353,20 +344,20 @@ HyperEmitter.prototype.listen = function (port, address, callback) {
 }
 
 HyperEmitter.prototype.stream = function (opts) {
-  var that = this
-  var result = duplexify.obj()
-  var input = through2.obj(function (chunk, enc, next) {
-    that.emit(chunk.name, chunk.payload, next)
+  const result = duplexify.obj()
+  const input = through2.obj((chunk, enc, next) => {
+    this.emit(chunk.name, chunk.payload, next)
   })
 
   result.setWritable(input)
 
-  that._hyperlog.ready(function () {
-    var filter = through2.obj(function (change, enc, next) {
-      var container = that.codecs.Event.decode(change.value)
-      var name = container.name
-      var decoder = that.codecs[name]
-      var event = container.payload
+  this._hyperlog.ready(() => {
+    const that = this
+    const filter = through2.obj(function (change, enc, next) {
+      const container = that.codecs.Event.decode(change.value)
+      const name = container.name
+      const decoder = that.codecs[name]
+      let event = container.payload
 
       if (decoder) event = decoder.decode(event)
 
@@ -378,9 +369,9 @@ HyperEmitter.prototype.stream = function (opts) {
       next()
     })
 
-    var since = opts && opts.from === 'beginning' ? 0 : that._hyperlog.changes
+    const since = opts && opts.from === 'beginning' ? 0 : this._hyperlog.changes
 
-    pump(that._hyperlog.createReadStream({
+    pump(this._hyperlog.createReadStream({
       since: since,
       live: true
     }), filter)
@@ -392,18 +383,17 @@ HyperEmitter.prototype.stream = function (opts) {
 }
 
 HyperEmitter.prototype.close = function (callback) {
-  var resources = [this._db]
+  const resources = [this._db]
 
   if (this.changeStream) resources.push(this.changeStream)
   if (this._listening) resources.push(this._server)
 
-  var that = this
-  Object.keys(this._peers).forEach(function (peerId) {
-    resources.unshift(that._peers[peerId])
+  Object.keys(this._peers).forEach((peerId) => {
+    resources.unshift(this._peers[peerId])
   })
 
   this._closed = true
   this._parallel(this, destroyOrClose, resources, callback || noop)
 }
 
-module.exports = HyperEmitter
+export default HyperEmitter

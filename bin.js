@@ -1,14 +1,16 @@
 #! /usr/bin/env node
 
-var memdb = require('memdb')
-var pump = require('pump')
-var level = require('level')
-var fs = require('fs')
-var vm = require('vm')
-var minimist = require('minimist')
-var repl = require('repl')
-var ndjson = require('ndjson')
-var argv = minimist(process.argv.splice(2), {
+import memdb from 'memdb'
+import pump from 'pump'
+import level from 'level'
+import { readFileSync } from 'node:fs'
+import { createScript, runInContext } from 'node:vm'
+import minimist from 'minimist'
+import { start } from 'node:repl'
+import ndjson from 'ndjson'
+import HyperEmitter from './hyperemitter.js'
+
+const argv = minimist(process.argv.slice(2), {
   string: ['host', 'port', 'targetHost', 'db'],
   boolean: ['help', 'repl'],
   alias: {
@@ -36,11 +38,11 @@ if (argv.help) {
   process.exit(1)
 }
 
-var messages = null
+let messages = null
 if (argv._[0]) {
-  messages = fs.readFileSync(argv._[0])
+  messages = readFileSync(argv._[0])
 } else if (argv.schema) {
-  messages = fs.readFileSync(argv.schema)
+  messages = readFileSync(argv.schema)
 } else {
   console.error('Missing schema')
   console.log()
@@ -48,12 +50,12 @@ if (argv._[0]) {
   process.exit(1)
 }
 
-var db = argv.db ? level(argv.db) : memdb()
-var hyper = require('./')(db, messages)
-var start = argv.repl ? startREPL : startStream
+const db = argv.db ? level(argv.db) : memdb()
+const hyper = new HyperEmitter(db, messages)
+const startFn = argv.repl ? startREPL : startStream
 
 if (argv.port) {
-  hyper.listen(argv.port, argv.host, function (err, bound) {
+  hyper.listen(argv.port, argv.host, (err, bound) => {
     if (err) {
       throw err
     }
@@ -62,15 +64,15 @@ if (argv.port) {
       console.log('listening on', bound.port, bound.address)
     }
 
-    connect(start)
+    connect(startFn)
   })
 } else {
-  connect(start)
+  connect(startFn)
 }
 
 function connect (next) {
   if (argv.targetHost && argv.targetPort) {
-    hyper.connect(argv.targetPort, argv.targetHost, function (err) {
+    hyper.connect(argv.targetPort, argv.targetHost, (err) => {
       if (err) {
         throw err
       }
@@ -91,7 +93,7 @@ function startREPL (err) {
     throw err
   }
 
-  var instance = repl.start({
+  const instance = start({
     ignoreUndefined: true,
     eval: noOutputEval,
     input: process.stdin,
@@ -100,10 +102,10 @@ function startREPL (err) {
 
   instance.context.hyper = hyper
 
-  Object.keys(hyper.messages).map(function (key) {
+  Object.keys(hyper.messages).map((key) => {
     return hyper.messages[key]
-  }).forEach(function (message) {
-    hyper.on(message.name, function (msg) {
+  }).forEach((message) => {
+    hyper.on(message.name, (msg) => {
       instance.inputStream.write('\n')
       console.log(message.name, msg)
 
@@ -112,20 +114,21 @@ function startREPL (err) {
     })
   })
 
-  instance.on('exit', function () {
+  instance.on('exit', () => {
     process.exit(0)
   })
 }
 
 function noOutputEval (cmd, context, filename, callback) {
-  var err
+  let err
 
   if (cmd === '(\n)') {
     return callback(null, undefined)
   }
 
+  let script
   try {
-    var script = vm.createScript(cmd, {
+    script = createScript(cmd, {
       filename: filename,
       displayErrors: false
     })
@@ -146,8 +149,8 @@ function noOutputEval (cmd, context, filename, callback) {
 }
 
 function startStream () {
-  var opts = argv.fromScratch ? { from: 'beginning' } : null
-  var stream = hyper.stream(opts)
+  const opts = argv.fromScratch ? { from: 'beginning' } : null
+  const stream = hyper.stream(opts)
 
   // input pipeline
   pump(

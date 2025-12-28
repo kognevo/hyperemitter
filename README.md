@@ -10,83 +10,134 @@ uses [protocol-buffers](https://developers.google.com/protocol-buffers/), specif
 > excite please jump in wherever you feel you can help!
 
 ## Installation
-To install the module for use locally in your project use:
 
-```
-npm install hyperemitter --save
+### Node.js (ESM or CommonJS)
+
+To install the module for use locally in your project:
+
+```bash
+npm install hyperemitter
 ```
 
-To install the companion CLI tool, you will need to install globally:
+**Requirements:** Node.js 20+ (LTS)
 
+### Bun
+
+HyperEmitter is fully compatible with Bun runtime:
+
+```bash
+bun add hyperemitter
 ```
-npm install hyperemitter -g
+
+To install the companion CLI tool globally:
+
+```bash
+npm install -g hyperemitter
+# or with Bun
+bun install -g hyperemitter
+```
+
+## Module System Support
+
+HyperEmitter supports both ESM (ECMAScript Modules) and CommonJS:
+
+### ESM (Recommended)
+
+```javascript
+import HyperEmitter from 'hyperemitter'
+import memdb from 'memdb'
+import { readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
+const schema = readFileSync(join(__dirname, 'example-schema.proto'))
+const emitter = new HyperEmitter(memdb(), schema)
+```
+
+### CommonJS
+
+```javascript
+// Note: For best compatibility, use ESM or dynamic import
+const HyperEmitter = (await import('hyperemitter')).default
+const memdb = (await import('memdb')).default
+// ... rest of your code
+```
+
+### Bun
+
+Bun natively supports ESM, so you can use the ESM syntax directly:
+
+```javascript
+import HyperEmitter from 'hyperemitter'
+import memdb from 'memdb'
+// ... rest of your code
 ```
 
 ## Example
-The example below can be found and ran from the [examples](./examples/) folder; it demonstrates
-how to connect two HyperEmitters together and how they both receive all messages sent.
+
+The example below demonstrates how to connect two HyperEmitters together and how they both receive all messages sent.
+
+### ESM Example
 
 ```javascript
-'use strict'
+import HyperEmitter from 'hyperemitter'
+import memdb from 'memdb'
+import { readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-var fs = require('fs')
-var path = require('path')
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
-// The emitter itself as well as an in memory
-// leveldb based store, any leveldb store will do.
-var HyperEmitter = require('../hyperemitter')
-var buildDB = require('memdb')
+// Use the example-schema.proto as the message schema
+const schema = readFileSync(join(__dirname, 'example-schema.proto'))
 
-// use the example-schema.proto as the message schema.
-var schema = fs.readFileSync(path.join('.', 'example-schema.proto'))
+// Two emitters will be used for this example, notice each
+// maintains its own leveldb store and share the same schema
+const emitterOne = new HyperEmitter(memdb('a'), schema)
+const emitterTwo = new HyperEmitter(memdb('b'), schema)
 
-// two emitters will be used for this example, notice each
-// maintains it's own leveldb store and share the same schema.
-var emitterOne = new HyperEmitter(buildDB('a'), schema)
-var emitterTwo = new HyperEmitter(buildDB('b'), schema)
+// Listen on port 9901, ensure no connection error
+emitterOne.listen(9901, (err) => {
+  if (err) return
 
-// listen on port 9001, ensure no connection error.
-emitterOne.listen(9901, function (err) {
-  if (err) { return }
-
-  // connect to the first emitter.
-  emitterTwo.connect(9901, '127.0.0.1', function (err) {
-    if (err) { return }
+  // Connect to the first emitter
+  emitterTwo.connect(9901, '127.0.0.1', (err) => {
+    if (err) return
   })
 
-  // basic message type
-  var userAddedMsg = {
+  // Basic message types
+  const userAddedMsg = {
     id: 1,
     username: 'user'
   }
 
-  // basic message type
-  var userRemovedMsg = {
+  const userRemovedMsg = {
     id: 1
   }
 
-  // Messages sent on either emitter will be handled.
-  emitterOne.on('userRemoved', function (msg) {
+  // Messages sent on either emitter will be handled
+  emitterOne.on('userRemoved', (msg) => {
     console.log('userRemoved: ', msg)
   })
 
-  // Messages sent on either emitter will be handled.
-  emitterTwo.on('userAdded', function (msg) {
+  // Messages sent on either emitter will be handled
+  emitterTwo.on('userAdded', (msg) => {
     console.log('userAdded: ', msg)
   })
 
-  // We send each message across the opposite emitter.
+  // We send each message across the opposite emitter
   emitterOne.emit('userAdded', userAddedMsg)
   emitterTwo.emit('userRemoved', userRemovedMsg)
 
-  function complete () {
+  // Clean up after 500ms
+  setTimeout(() => {
     emitterOne.close()
     emitterTwo.close()
-  }
-
-  // we will wait for 500ms to see if more than one
-  // message is delivered to the subscribers above.
-  setTimeout(complete, 500)
+  }, 500)
 })
 ```
 
@@ -328,8 +379,27 @@ Close a given HyperEmitter. After, all `emit` will return an error.
 
 ---
 
+## Modernization (v2.0.0)
+
+This module has been modernized for 2025 with:
+
+- **ESM Support**: Native ES Modules with dual CommonJS compatibility
+- **Modern Dependencies**: All dependencies upgraded to latest versions
+- **Bun Runtime Support**: Full compatibility with Bun runtime
+- **Modern JavaScript**: Uses const/let, arrow functions, and modern patterns
+- **Node.js 20+**: Requires Node.js 20 or higher (LTS)
+
+### Migration from v1.x
+
+If you're upgrading from v1.x:
+
+1. **ESM Users**: No changes needed, continue using `import HyperEmitter from 'hyperemitter'`
+2. **CommonJS Users**: Consider migrating to ESM, or use dynamic import: `const HyperEmitter = (await import('hyperemitter')).default`
+3. **Node.js Version**: Ensure you're running Node.js 20+
+
 ## Contributing
-HyperEmitter is a mad science project and like all mad science project it requires mad scientists, the more
+
+HyperEmitter is a mad science project and like all mad science projects it requires mad scientists, the more
 the merrier! If you feel you can help in any way, be it with examples, extra testing, or new features please
 be our guest. See our [Contribution Guide](./CONTRIBUTING.md) for information on obtaining the source and an overview of the
 tooling used.
